@@ -1,0 +1,217 @@
+# TKJ Project 2024 Fibonacci
+# Walid Nouicer, Y69325904, Walid.Nouicer@student.oulu.fi
+#
+# Reflection:
+# - the estimation for the instruction count is the sum of instructions of every subroutine
+# - the highest number that can be handled is 1000, the estimation for instructions executed for this number is: 8 for main and check + (7 + 4000 + 20 + 13) for isFibonacci +2 * [ 11 * 6 for bit to get 0b10^22 + (4 + 3617) for shift_by_one and if, else + 5585 for shift_by_two ] for SquareRoot + 2 *[ 4 + 2236 * 4] for multi = 40488
+# - shift_by_one and shift_by_two instruction count estimation was computed using this c code: https://github.com/Walid-N-bit/CS_PART_II_Project_2024/blob/main/sqrt_and_shift_by_subtraction_step_counter.c
+# - to reduce the likelihood of bugs, some registers are reserved for certain purposes
+# - the program is devided into several subroutines also to avoid possible bugs
+# - SquareRoot subroutine is the same I used from excercises, made more efficient for shifting right subroutines
+# - there are some "register cleaning" instructions that are meant to solve the problem of integrating subroutines that use the same register to each other
+# - I tried avoiding using them to lower instruction count but in retrospect it would have been more efficient to use them more because there's a limited number of registers and it would allow for more freedom to code
+# - this is especially true since most instruction count comes from iterative loops and not variable initialization
+# - most of the instruction count is produced by SquareRoot subroutine, which is why most optimization efforts are focused on it
+# - finding "bit" value for the SquareRoot is done by shifting a number left, not right as shown in the excercise's example code
+# - shifiting right by n is equivalent to multiplying by 2^n, it is done here by adding the number to itself starting from 4 (0b100)
+# - shifiting x by a value n is equivalent to dividing x by 2^n, division is done by subtracting 2^n and incrementing a buffer for the quotient for each iteration
+# - this process is extremely computationally intensive for large numbers, this is solved by dividing x over much larger values of 2^n, then dividing the remainder over smaller values for 2^n while decreasing the buffer increment each time appropriately
+# - another way to make the code more efficient is by using efficient multiplication for when calculating the result of Binet's formula using a given number
+
+# Code starts here
+
+main:   
+    irmovq stack, %rsp      # Set up stack pointer
+    irmovq stack, %rbp
+
+    # %rax and %rcx are reserved globally
+    # %r8, %r9 are reseved per sub-routine
+    # initial check for memory pos 0x700
+    irmovq array, %rcx      # current memory position
+    mrmovq (%rcx), %rax     # the last number checked always stored in %rax
+    call isFibonacci
+    check:                  # check all numbers after the first
+        irmovq $8, %r8      # %r8 = 8 
+        addq %r8, %rcx      # increment memory pos
+        mrmovq (%rcx), %rax
+        call isFibonacci
+        jmp check
+        
+isFibonacci:                # 5x²+4 || 5x²-4
+    irmovq $0, %rbx         # clean %rbx
+    irmovq $0, %r9          # %r9 = 0
+    xorq %rax, %r9
+    je end                  # if x = 0 the program ends here 
+    
+    rrmovq %rax, %r10       # counter from x to 0
+    irmovq $1, %r8          # %r8 = 1
+    irmovq $5, %r9          # %r9 = 5
+    
+    xx:
+        addq %rax, %rdx     # %rdx = x²
+        subq %r8, %r10
+        je fxx
+        jmp xx
+        
+    fxx:                    # calculate 5x²
+        addq %rdx, %rbx     # %rbx = 5x²
+        subq %r8, %r9
+        je Binet
+        jmp fxx
+        
+    Binet:
+        irmovq $4, %r9      # %r9 = 4 -> constant beyond this point 
+        subq %r9, %rbx      # %rbx = 5x²-4
+        call SquareRoot
+        call multi
+        subq %rbx, %r11
+        je PerfectSquare
+        addq %r9, %rbx
+        addq %r9, %rbx      # %rbx = 5x²+4
+        call SquareRoot
+        call multi
+        subq %rbx, %r11
+        jne end             # if not perfect square, program ends here
+    PerfectSquare:
+ret
+
+multi:
+    rrmovq %rsi, %r10       # counter from x to 0
+    irmovq $1, %r8
+    irmovq $0, %r11
+    x_sq:
+        addq %rsi, %r11     # %r11 = x²
+        subq %r8, %r10
+        je compare
+        jmp x_sq
+    compare:
+ret
+    
+# can't change %r9 and %rbx values after this
+SquareRoot:                 # res = sqrt(num)
+    irmovq $4, %r13         # initial value of bit
+    bit:
+        rrmovq %r13, %rdx
+        subq %rbx, %rdx
+        jg start_calc
+        rrmovq %r13, %r8    # bit is stored in %r8
+        addq %r13, %r13
+        addq %r13, %r13     # shift left by 2
+        jmp bit
+    start_calc:             # the main loop
+        irmovq $0, %rsi             # clean %rsi
+        rrmovq %rbx, %rdx           # %rdx = num
+        loop:
+            rrmovq %r8, %r10        # %r10 = bit
+            addq %r10, %rsi         # %rsi = res + bit
+            subq %rsi, %rdx         # num - (res+bit)
+            jge if                  # num >= res + bit
+            jl else
+        continue:
+            call shift_by_two
+            irmovq $0, %r11         # %r11 = 0
+            subq %r11, %r8
+            je finish_calc          # final res = %rsi
+            jmp loop
+        
+        if:                     # num remains the same = num - (res+bit)
+            subq %r10, %rsi     # res + bit - bit = res
+            call shift_by_one   # res >> 1
+            addq %r10, %rsi     # (res >> 1) + bit
+            jmp continue
+        
+        else:
+            addq %rsi, %rdx     # %rdx's value (num) is reverted
+            subq %r10, %rsi     # res + bit - bit = res
+            call shift_by_one   # res >> 1
+            jmp continue
+    finish_calc:         # end of main loop
+ret                      # return %rsi = sqrt(%rbx) 
+        
+
+# shifting to the right by one ( >> 1) is the same as dividing by 2,
+# here to reduce number of cycles we subtract %r9's value 
+#each time and add %r12's value to the counter
+# this is done over three loops, each time with lower values
+# this is done to get accurate division results
+shift_by_one:               # %rsi = res, %r9 is const = 4 
+    irmovq 16384, %r12      # counter increment value
+    irmovq $0, %rdi         # clean %rdi
+    irmovq $32768, %r9      # we borrow %r9 for this subroutine
+    div_one:
+        subq %r9, %rsi
+        jl smaller_step_one
+        addq %r12, %rdi         # %rdi is buffer for the updated value of res 
+        jmp div_one
+    smaller_step_one:
+        addq %r9, %rsi          # %rsi's value is restored because it contains the remainder of the previous division loop
+        irmovq $64, %r12         
+        irmovq $128, %r9
+        smaller_div_one:
+            subq %r9, %rsi
+            jl even_smaller_step_one
+            addq %r12, %rdi          
+            jmp smaller_div_one
+        even_smaller_step_one:
+            addq %r9, %rsi      # %rsi's value is restored because it contains the remainder of the previous division loop
+            irmovq $1, %r12     
+            irmovq $2, %r9
+            even_smaller_div_one:
+                subq %r9, %rsi
+                jl divResult_one
+                addq %r12, %rdi         # %rdi is buffer for the updated value of res 
+                jmp even_smaller_div_one
+            divResult_one:
+                rrmovq %rdi, %rsi
+                irmovq $4, %r9          # return old value of %r9
+ret
+
+# similarly to shift_by_one:
+# shifting to the right by two ( >> 2) is the same as dividing by 4,
+# here to reduce number of cycles we subtract %r9's value 
+#each time and add %r12's value to the counter
+# this is done over three loops, each time with lower values
+# this is done to get accurate division results
+shift_by_two:               # %r8 = bit, %r9 is const = 4 
+    irmovq 262144, %r12     # counter increment value
+    irmovq $0, %rdi         # clean %rdi
+    irmovq $1048576, %r9    # we borrow %r9 for this subroutine
+    div_two:
+        subq %r9, %r8
+        jl smaller_step_two
+        addq %r12, %rdi     # %rdi is buffer for the updated value of res 
+        jmp div_two
+    smaller_step_two:
+        addq %r9, %r8       # %r8's value is restored because it contains the remainder of the previous division loop
+        irmovq $4096, %r12          # new counter increment value
+        irmovq $16384, %r9
+        smaller_div_two:
+            subq %r9, %r8
+            jl even_smaller_step_two
+            addq %r12, %rdi         
+            jmp smaller_div_two
+        even_smaller_step_two:
+            addq %r9, %r8   # %r8's value is restored because it contains the remainder of the previous division loop
+            irmovq $1, %r12         
+            irmovq $4, %r9
+            even_smaller_div_two:
+                subq %r9, %r8
+                jl divResult_two
+                addq %r12, %rdi         # %rdi is buffer for the updated value of res 
+                jmp even_smaller_div_two
+            divResult_two:
+                rrmovq %rdi, %r8
+    irmovq $4, %r9          # return old value of %r9
+        ret
+
+
+end:                       # end of program 
+    halt
+
+.pos 0x700
+    array:
+
+.pos 0x800
+    stack:
+
+
